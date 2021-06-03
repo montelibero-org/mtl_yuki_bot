@@ -1,0 +1,10 @@
+cabal-version: 2.2
+
+name: yuki
+version: 0
+
+build-type: Simple
+
+executable yuki_bot
+  build-depends: base
+  main-is: Main.hs
