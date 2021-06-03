@@ -3,7 +3,14 @@
 # For more information, please see the documentation at:
 #   https://docs.haskellstack.org/en/stable/lock_files
 
-packages: []
+packages:
+- completed:
+    hackage: telegram-bot-simple-0.3.5@sha256:c325cd48830a38115418ca5e275ff6a713dc63689239a58f1b13bb44dc1d3a76,3601
+    pantry-tree:
+      size: 1835
+      sha256: 548c452cdb0d131cfba0569204fa85753362dc3baaa3e2e96842f3c3a8871c99
+  original:
+    hackage: telegram-bot-simple-0.3.5
 snapshots:
 - completed:
     size: 567241

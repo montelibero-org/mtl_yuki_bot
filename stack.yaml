@@ -1,1 +1,4 @@
 resolver: lts-17.10
+
+extra-deps:
+  - telegram-bot-simple-0.3.5
