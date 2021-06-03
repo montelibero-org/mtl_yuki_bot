@@ -6,6 +6,6 @@ version: 0
 build-type: Simple
 
 executable yuki_bot
-  build-depends: base, telegram-bot-simple
+  build-depends: aeson, base, lens, telegram-bot-simple, text, wreq
   default-language: Haskell2010
   main-is: Main.hs
