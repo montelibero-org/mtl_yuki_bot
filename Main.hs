@@ -1,46 +1,15 @@
-{-# LANGUAGE BlockArguments #-}
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DisambiguateRecordFields #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes #-}
-{-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE UndecidableInstances #-}
-
-module Main (main, CacheId) where
 
 import           Control.Applicative ((<|>))
-import           Control.Lens (view)
 import           Control.Monad.IO.Class (liftIO)
 import           Data.Aeson (FromJSON)
 import qualified Data.Aeson as Aeson
-import           Data.ByteString (ByteString)
-import qualified Data.ByteString.Lazy as BSL
 import           Data.Map.Strict (Map, (!?))
 import           Data.Ratio ((%))
 import           Data.Text (Text)
 import qualified Data.Text as Text
-import           Data.Time (UTCTime, addUTCTime, getCurrentTime,
-                            secondsToNominalDiffTime)
 import qualified Data.Yaml as Yaml
-import qualified Database.Persist as Persist
-import           Database.Persist.Sqlite (runMigration, runSqlite)
-import           Database.Persist.TH (mkMigrate, mkPersist, persistLowerCase,
-                                      share, sqlSettings)
 import           GHC.Generics (Generic)
-import qualified Network.Wreq as Wreq
 import           Telegram.Bot.API (ParseMode (Markdown), Update,
                                    defaultTelegramClientEnv)
 import           Telegram.Bot.Simple (BotApp (..), BotM, Eff, eff, getEnvToken,
@@ -51,14 +20,7 @@ import           Telegram.Bot.Simple.UpdateParser (parseUpdate)
 import qualified Telegram.Bot.Simple.UpdateParser as UpdateParser
 import           Text.Printf (printf)
 
-share
-  [mkPersist sqlSettings, mkMigrate "migrateAll"]
-  [persistLowerCase|
-    Cache
-      Id            Text
-      responseBody  ByteString
-      updated       UTCTime
-  |]
+import           HTTP (getCached)
 
 main :: IO ()
 main = do
@@ -121,7 +83,7 @@ help =
   \/mtlcity – MTLCITY information\n\
   \/mtlcity_holders – MTL holders\n\
   \\n\
-  \There may be a delay in a few minutes in data actuality."
+  \There may be a delay in a few minutes in data freshness."
 
 handleCommand :: Command -> BotM ()
 handleCommand = \case
@@ -167,28 +129,6 @@ memberName knownAccounts account =
   case knownAccounts !? account of
     Just name -> name
     Nothing   -> "..." <> Text.takeEnd 4 account
-
-getCached :: Text -> IO ByteString
-getCached url =
-  runSqlite cacheFile do
-    runMigration migrateAll
-    cached <- Persist.get (CacheKey url)
-    now <- liftIO getCurrentTime
-    case cached of
-      Just Cache{cacheResponseBody, cacheUpdated}
-        | addUTCTime timeout cacheUpdated > now ->
-            pure cacheResponseBody
-      _ -> do
-        responseBody <-
-          liftIO $
-          BSL.toStrict . view Wreq.responseBody <$> Wreq.get (Text.unpack url)
-        Persist.repsert
-          (CacheKey url)
-          Cache{cacheResponseBody = responseBody, cacheUpdated = now}
-        pure responseBody
-  where
-    cacheFile = "http_cache.sqlite"
-    timeout = secondsToNominalDiffTime 60
 
 getHolders :: Fund -> IO [Holder]
 getHolders fund =
