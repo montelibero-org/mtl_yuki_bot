@@ -123,16 +123,23 @@ handleCommand = \case
     knownAccounts <-
       liftIO $ Yaml.decodeFileThrow "../stellar-id/known_accounts.yaml"
     holders <- liftIO $ getHolders mtl
+    let sumBalance = sum [balance | Holder{balance} <- holders]
     reply
       (toReplyMessage $
-        Text.unlines
+        Text.unlines $
+          "*MTL holders*" :
+          "" :
+          "`share` | `tokens` | `holder`" :
+          "" :
           [ Text.intercalate " | "
-              [ "TODO share"
-              , Text.pack $ printf "`%5.0f`" (realToFrac balance :: Double)
+              [ Text.pack $
+                printf
+                  "`%4.1f%%`"
+                  (realToFrac (100 * balance / sumBalance) :: Double)
+              , Text.pack $ printf "`%6d`" (round balance :: Integer)
               , Text.replace "_" "\\_" $ memberName knownAccounts account
               ]
-          | Holder{account, balance = balance'} <- holders
-          , let balance = read @Integer (Text.unpack balance') % 10_000_000
+          | Holder{account, balance} <- holders
           ])
         {replyMessageParseMode = Just Markdown}
 
@@ -172,8 +179,12 @@ getHolders fund =
   do
     responseBody <- getCached url
     case Aeson.eitherDecodeStrict' responseBody of
-      Left err                                        -> fail err
-      Right ResponseOk{_embedded = Embedded{records}} -> pure records
+      Left err -> fail err
+      Right ResponseOk{_embedded = Embedded{records}} ->
+        pure
+          [ Holder{account, balance = read @Integer balance % 10_000_000}
+          | Holder{account, balance} <- records
+          ]
   where
     network = "public"
     url =
@@ -207,8 +218,10 @@ newtype Embedded a = Embedded{records :: [a]}
   deriving anyclass (FromJSON)
   deriving stock (Generic)
 
-data Holder = Holder{account, balance :: Text}
+data Holder' a = Holder{account :: Text, balance :: a}
   deriving (FromJSON, Generic, Show)
+
+type Holder = Holder' Rational
 
 data Fund = Fund{assetName, assetIssuer :: Text, treasury :: Maybe Text}
 
