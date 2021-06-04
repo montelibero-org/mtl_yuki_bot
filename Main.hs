@@ -47,8 +47,8 @@ import           Telegram.Bot.Simple (BotApp (..), BotM, Eff, eff, getEnvToken,
                                       reply, replyMessageParseMode, replyText,
                                       startBot_, toReplyMessage, (<#))
 import           Telegram.Bot.Simple.Debug (traceBotDefault)
-import           Telegram.Bot.Simple.UpdateParser as UpdateParser (command,
-                                                                   parseUpdate)
+import           Telegram.Bot.Simple.UpdateParser (parseUpdate)
+import qualified Telegram.Bot.Simple.UpdateParser as UpdateParser
 import           Text.Printf (printf)
 
 share
@@ -74,6 +74,7 @@ data Command
   | MtlInfo
   | MtlHolders
   | MtlcityInfo
+  | MtlcityHolders
   deriving Show
 
 data Action = NoAction | Action Command
@@ -92,9 +93,10 @@ handleUpdate :: Update -> Maybe Command
 handleUpdate =
   parseUpdate
     $   Help <$ (UpdateParser.command "help" <|> UpdateParser.command "start")
-    <|> MtlInfo     <$ UpdateParser.command "mtl"
-    <|> MtlHolders  <$ UpdateParser.command "mtl_holders"
-    <|> MtlcityInfo <$ UpdateParser.command "mtlcity"
+    <|> MtlInfo        <$ UpdateParser.command "mtl"
+    <|> MtlHolders     <$ UpdateParser.command "mtl_holders"
+    <|> MtlcityInfo    <$ UpdateParser.command "mtlcity"
+    <|> MtlcityHolders <$ UpdateParser.command "mtlcity_holders"
 
 handleAction :: Action -> Model -> Eff Action Model
 handleAction action model@Model{initialized = False} = do
@@ -117,40 +119,45 @@ help =
   \/mtl – MTL information\n\
   \/mtl_holders – MTL holders\n\
   \/mtlcity – MTLCITY information\n\
+  \/mtlcity_holders – MTL holders\n\
   \\n\
   \There may be a delay in a few minutes in data actuality."
 
 handleCommand :: Command -> BotM ()
 handleCommand = \case
-  Help        -> replyText help
-  MtlInfo     -> replyText $ assetExpertUrl mtl
-  MtlcityInfo -> replyText $ assetExpertUrl mtlcity
-  MtlHolders  -> do
-    knownAccounts <-
-      liftIO $ Yaml.decodeFileThrow "../stellar-id/known_accounts.yaml"
-    holders <- liftIO $ getHolders mtl
-    let sumBalance = sum [balance | Holder{balance} <- holders]
-    reply
-      (toReplyMessage $
+  Help           -> replyText help
+  MtlInfo        -> replyText $ assetExpertUrl mtl
+  MtlcityInfo    -> replyText $ assetExpertUrl mtlcity
+  MtlHolders     -> replyHolders mtl
+  MtlcityHolders -> replyHolders mtlcity
+
+replyHolders :: Fund -> BotM ()
+replyHolders fund@Fund{assetName} = do
+  knownAccounts <-
+    liftIO $ Yaml.decodeFileThrow "../stellar-id/known_accounts.yaml"
+  holders <- liftIO $ getHolders fund
+  let sumBalance = sum [balance | Holder{balance} <- holders]
+  let message =
         Text.unlines
-          $   "*MTL holders*"
-          :   "```"
-          :   "share | tokens | holder"
-          :   "------+--------+-------------"
-          :   [ Text.intercalate " | "
-                  [ Text.pack $
-                    printf
-                      "%4.1f%%"
-                      (realToFrac (100 * balance / sumBalance) :: Double)
-                  , Text.pack $ printf "%6d" (round balance :: Integer)
-                  , memberName knownAccounts account
-                  ]
-              | Holder{account, balance} <- holders
-              ]
-          ++  [ "```"
-              , "Total supply: " <> tshow (realToFrac sumBalance :: Double)
-              ])
-        {replyMessageParseMode = Just Markdown}
+        $   "*" <> assetName <> " holders*"
+        :   ""
+        :   "```"
+        :   "share | tokens | holder"
+        :   "------+--------+-------------"
+        :   [ Text.intercalate " | "
+                [ Text.pack $
+                  printf
+                    "%4.1f%%"
+                    (realToFrac (100 * balance / sumBalance) :: Double)
+                , Text.pack $ printf "%6d" (round balance :: Integer)
+                , memberName knownAccounts account
+                ]
+            | Holder{account, balance} <- holders
+            ]
+        ++  [ "```"
+            , "Total supply: " <> tshow (realToFrac sumBalance :: Double)
+            ]
+  reply (toReplyMessage message){replyMessageParseMode = Just Markdown}
 
 tshow :: Show a => a -> Text
 tshow = Text.pack . show
@@ -233,6 +240,7 @@ data Holder' a = Holder{account :: Text, balance :: a}
 type Holder = Holder' Rational
 
 data Fund = Fund{assetName, assetIssuer :: Text, treasury :: Maybe Text}
+  deriving Show
 
 assetId :: Fund -> Text
 assetId Fund{assetName, assetIssuer} = assetName <> "-" <> assetIssuer
