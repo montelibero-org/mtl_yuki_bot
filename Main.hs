@@ -10,10 +10,12 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -27,6 +29,7 @@ import qualified Data.Aeson as Aeson
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as BSL
 import           Data.Map.Strict (Map, (!?))
+import           Data.Ratio ((%))
 import           Data.Text (Text)
 import qualified Data.Text as Text
 import           Data.Time (UTCTime, addUTCTime, getCurrentTime,
@@ -38,12 +41,15 @@ import           Database.Persist.TH (mkMigrate, mkPersist, persistLowerCase,
                                       share, sqlSettings)
 import           GHC.Generics (Generic)
 import qualified Network.Wreq as Wreq
-import           Telegram.Bot.API (Update, defaultTelegramClientEnv)
+import           Telegram.Bot.API (ParseMode (Markdown), Update,
+                                   defaultTelegramClientEnv)
 import           Telegram.Bot.Simple (BotApp (..), BotM, Eff, eff, getEnvToken,
-                                      replyText, startBot_, (<#))
+                                      reply, replyMessageParseMode, replyText,
+                                      startBot_, toReplyMessage, (<#))
 import           Telegram.Bot.Simple.Debug (traceBotDefault)
 import           Telegram.Bot.Simple.UpdateParser as UpdateParser (command,
                                                                    parseUpdate)
+import           Text.Printf (printf)
 
 share
   [mkPersist sqlSettings, mkMigrate "migrateAll"]
@@ -117,14 +123,21 @@ handleCommand = \case
     knownAccounts <-
       liftIO $ Yaml.decodeFileThrow "../stellar-id/known_accounts.yaml"
     holders <- liftIO $ getHolders mtl
-    replyText $
-      Text.unlines
-        [ memberName knownAccounts account <> " | " <> tshow balance
-        | Holder{account, balance} <- holders
-        ]
+    reply
+      (toReplyMessage $
+        Text.unlines
+          [ Text.intercalate " | "
+              [ "TODO share"
+              , Text.pack $ printf "`%5.0f`" (realToFrac balance :: Double)
+              , Text.replace "_" "\\_" $ memberName knownAccounts account
+              ]
+          | Holder{account, balance = balance'} <- holders
+          , let balance = read @Integer (Text.unpack balance') % 10_000_000
+          ])
+        {replyMessageParseMode = Just Markdown}
 
-tshow :: Show a => a -> Text
-tshow = Text.pack . show
+-- tshow :: Show a => a -> Text
+-- tshow = Text.pack . show
 
 memberName :: Map Text Text -> Text -> Text
 memberName knownAccounts account =
