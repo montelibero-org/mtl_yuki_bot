@@ -132,25 +132,28 @@ handleCommand = \case
     let sumBalance = sum [balance | Holder{balance} <- holders]
     reply
       (toReplyMessage $
-        Text.unlines $
-          "*MTL holders*" :
-          "" :
-          "`share` | `tokens` | `holder`" :
-          "" :
-          [ Text.intercalate " | "
-              [ Text.pack $
-                printf
-                  "`%4.1f%%`"
-                  (realToFrac (100 * balance / sumBalance) :: Double)
-              , Text.pack $ printf "`%6d`" (round balance :: Integer)
-              , Text.replace "_" "\\_" $ memberName knownAccounts account
+        Text.unlines
+          $   "*MTL holders*"
+          :   "```"
+          :   "share | tokens | holder"
+          :   "------+--------+-------------"
+          :   [ Text.intercalate " | "
+                  [ Text.pack $
+                    printf
+                      "%4.1f%%"
+                      (realToFrac (100 * balance / sumBalance) :: Double)
+                  , Text.pack $ printf "%6d" (round balance :: Integer)
+                  , memberName knownAccounts account
+                  ]
+              | Holder{account, balance} <- holders
               ]
-          | Holder{account, balance} <- holders
-          ])
+          ++  [ "```"
+              , "Total supply: " <> tshow (realToFrac sumBalance :: Double)
+              ])
         {replyMessageParseMode = Just Markdown}
 
--- tshow :: Show a => a -> Text
--- tshow = Text.pack . show
+tshow :: Show a => a -> Text
+tshow = Text.pack . show
 
 memberName :: Map Text Text -> Text -> Text
 memberName knownAccounts account =
@@ -197,7 +200,7 @@ getHolders fund =
       mconcat
         [ "https://api.stellar.expert/explorer/", network
         , "/asset/", assetId fund
-        , "/holders"
+        , "/holders?limit=100"
         ]
 
 mtl :: Fund
