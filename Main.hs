@@ -26,9 +26,11 @@ import           Data.Aeson (FromJSON)
 import qualified Data.Aeson as Aeson
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as BSL
+import           Data.Map.Strict (Map, (!?))
 import qualified Data.Text as Text
 import           Data.Time (UTCTime, addUTCTime, getCurrentTime,
                             secondsToNominalDiffTime)
+import qualified Data.Yaml as Yaml
 import qualified Database.Persist as Persist
 import           Database.Persist.Sqlite (runMigration, runSqlite)
 import           Database.Persist.TH (mkMigrate, mkPersist, persistLowerCase,
@@ -111,8 +113,20 @@ handleCommand = \case
       "https://stellar.expert/explorer/public/asset/\
       \MTL-GACKTN5DAZGWXRWB2WLM6OPBDHAMT6SJNGLJZPQMEZBUR4JUGBX2UK7V"
   MtlHolders -> do
+    knownAccounts <-
+      liftIO $ Yaml.decodeFileThrow "../stellar-id/known_accounts.yaml"
     holders <- liftIO $ getHolders mtl
-    replyText $ Text.pack $ show holders
+    replyText $
+      Text.unlines
+        [ Text.pack $ memberName knownAccounts account <> " | " <> show balance
+        | Holder{account, balance} <- holders
+        ]
+
+memberName :: Map String String -> String -> String
+memberName knownAccounts account =
+  case knownAccounts !? account of
+    Just name -> name
+    Nothing   -> "..." <> drop (length account - 4) account
 
 getCached :: String -> IO ByteString
 getCached url =
@@ -127,7 +141,7 @@ getCached url =
       _ -> do
         responseBody <-
           liftIO $ BSL.toStrict . view Wreq.responseBody <$> Wreq.get url
-        Persist.insertKey
+        Persist.repsert
           (CacheKey url)
           Cache{cacheResponseBody = responseBody, cacheUpdated = now}
         pure responseBody

@@ -10,6 +10,7 @@ executable yuki_bot
     aeson,
     base,
     bytestring,
+    containers,
     lens,
     persistent,
     persistent-template,
@@ -18,5 +19,6 @@ executable yuki_bot
     text,
     time,
     wreq,
+    yaml,
   default-language: Haskell2010
   main-is: Main.hs
