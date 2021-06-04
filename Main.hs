@@ -69,7 +69,11 @@ main = do
 newtype Model = Model{initialized :: Bool}
   deriving Show
 
-data Command = Help | MtlInfo | MtlHolders
+data Command
+  = Help
+  | MtlInfo
+  | MtlHolders
+  | MtlcityInfo
   deriving Show
 
 data Action = NoAction | Action Command
@@ -88,8 +92,9 @@ handleUpdate :: Update -> Maybe Command
 handleUpdate =
   parseUpdate
     $   Help <$ (UpdateParser.command "help" <|> UpdateParser.command "start")
-    <|> MtlInfo    <$ UpdateParser.command "mtl"
-    <|> MtlHolders <$ UpdateParser.command "mtl_holders"
+    <|> MtlInfo     <$ UpdateParser.command "mtl"
+    <|> MtlHolders  <$ UpdateParser.command "mtl_holders"
+    <|> MtlcityInfo <$ UpdateParser.command "mtlcity"
 
 handleAction :: Action -> Model -> Eff Action Model
 handleAction action model@Model{initialized = False} = do
@@ -105,21 +110,22 @@ handleAction (Action cmd) model =
 initialize :: BotM ()
 initialize = pure ()
 
+help :: Text
+help =
+  "This bot show some stats about MTL fund and its affiliated funds.\n\
+  \\n\
+  \/mtl – MTL information\n\
+  \/mtl_holders – MTL holders\n\
+  \/mtlcity – MTLCITY information\n\
+  \\n\
+  \There may be a delay in a few minutes in data actuality."
+
 handleCommand :: Command -> BotM ()
 handleCommand = \case
-  Help ->
-    replyText
-      "This bot show some stats about MTL fund and its affiliated funds.\n\
-      \\n\
-      \/mtl – MTL information\n\
-      \/mtl_holders – MTL holders\n\
-      \\n\
-      \There may be a delay in a few minutes in data actuality."
-  MtlInfo ->
-    replyText
-      "https://stellar.expert/explorer/public/asset/\
-      \MTL-GACKTN5DAZGWXRWB2WLM6OPBDHAMT6SJNGLJZPQMEZBUR4JUGBX2UK7V"
-  MtlHolders -> do
+  Help        -> replyText help
+  MtlInfo     -> replyText $ assetExpertUrl mtl
+  MtlcityInfo -> replyText $ assetExpertUrl mtlcity
+  MtlHolders  -> do
     knownAccounts <-
       liftIO $ Yaml.decodeFileThrow "../stellar-id/known_accounts.yaml"
     holders <- liftIO $ getHolders mtl
@@ -202,13 +208,13 @@ mtl =
     , treasury = Just "GDX23CPGMQ4LN55VGEDVFZPAJMAUEHSHAMJ2GMCU2ZSHN5QF4TMZYPIS"
     }
 
--- mtlcity :: Fund
--- mtlcity =
---   Fund
---     { assetName   = "MTLCITY"
---     , assetIssuer = "GDUI7JVKWZV4KJVY4EJYBXMGXC2J3ZC67Z6O5QFP4ZMVQM2U5JXK2OK3"
---     , treasury    = Nothing
---     }
+mtlcity :: Fund
+mtlcity =
+  Fund
+    { assetName   = "MTLCITY"
+    , assetIssuer = "GDUI7JVKWZV4KJVY4EJYBXMGXC2J3ZC67Z6O5QFP4ZMVQM2U5JXK2OK3"
+    , treasury    = Nothing
+    }
 
 newtype ResponseOk a = ResponseOk{_embedded :: Embedded a}
   deriving anyclass (FromJSON)
@@ -227,3 +233,7 @@ data Fund = Fund{assetName, assetIssuer :: Text, treasury :: Maybe Text}
 
 assetId :: Fund -> Text
 assetId Fund{assetName, assetIssuer} = assetName <> "-" <> assetIssuer
+
+assetExpertUrl :: Fund -> Text
+assetExpertUrl fund =
+  "https://stellar.expert/explorer/public/asset/" <> assetId fund
