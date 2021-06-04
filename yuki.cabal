@@ -11,6 +11,7 @@ executable yuki_bot
     base,
     bytestring,
     containers,
+    generic-lens,
     lens,
     persistent,
     persistent-template,

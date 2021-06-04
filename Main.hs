@@ -1,10 +1,16 @@
+{-# OPTIONS -Wno-orphans #-}
+
+{-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 import           Control.Applicative ((<|>))
+import           Control.Lens (_Just, view)
 import           Control.Monad.IO.Class (liftIO)
 import           Data.Aeson (FromJSON)
 import qualified Data.Aeson as Aeson
+import           Data.Generics.Labels ()
 import           Data.Map.Strict (Map, (!?))
+import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes)
 import           Data.Ratio ((%))
 import           Data.Text (Text)
@@ -13,9 +19,10 @@ import qualified Data.Yaml as Yaml
 import           GHC.Generics (Generic)
 import           Telegram.Bot.API (ParseMode (Markdown), Update,
                                    defaultTelegramClientEnv)
-import           Telegram.Bot.Simple (BotApp (..), BotM, Eff, getEnvToken,
-                                      reply, replyMessageParseMode, replyText,
-                                      startBot_, toReplyMessage, (<#))
+import           Telegram.Bot.Simple (BotApp (..), BotContext (..), BotM, Eff,
+                                      getEnvToken, reply, replyMessageParseMode,
+                                      replyText, startBot_, toReplyMessage,
+                                      (<#))
 import           Telegram.Bot.Simple.Debug (traceBotDefault)
 import           Telegram.Bot.Simple.UpdateParser (parseUpdate)
 import qualified Telegram.Bot.Simple.UpdateParser as UpdateParser
@@ -87,10 +94,20 @@ handleCommand = \case
   MtlHolders     -> replyHolders mtl
   MtlcityHolders -> replyHolders mtlcity
 
+-- | TODO propose upstream
+deriving instance Generic BotContext
+
 replyHolders :: Fund -> BotM ()
 replyHolders fund@Fund{assetName} = do
+  mUsername <-
+    view $ #botContextUpdate . _Just . #updateMessage . _Just . #messageChat . #chatUsername
   knownAccounts <-
     liftIO $ Yaml.decodeFileThrow "../stellar-id/known_accounts.yaml"
+  let isUserKnown =
+        case mUsername of
+          Nothing -> False
+          Just username ->
+            username `elem` catMaybes (telegram <$> Map.elems knownAccounts)
   holders <- liftIO $ getHolders fund
   let sumBalance = sum [balance | Holder{balance} <- holders]
   let message =
@@ -106,7 +123,7 @@ replyHolders fund@Fund{assetName} = do
                     "%4.1f%%"
                     (realToFrac (100 * balance / sumBalance) :: Double)
                 , Text.pack $ printf "%6d" (round balance :: Integer)
-                , memberName knownAccounts account
+                , memberName isUserKnown knownAccounts account
                 ]
             | Holder{account, balance} <- holders
             ]
@@ -119,17 +136,23 @@ tshow :: Show a => a -> Text
 tshow = Text.pack . show
 
 data KnownAccount = KnownAccount
-  { name     :: Maybe Text
-  , telegram :: Maybe Text
+  { publicName  :: Maybe Text
+  , privateName :: Maybe Text
+  , telegram    :: Maybe Text
   }
   deriving (FromJSON, Generic)
 
-memberName :: Map Text KnownAccount -> Text -> Text
-memberName knownAccounts account =
+memberName :: Bool -> Map Text KnownAccount -> Text -> Text
+memberName isUserKnown knownAccounts account =
   case knownAccounts !? account of
-    Just KnownAccount{name = Nothing, telegram = Nothing} -> def
-    Just KnownAccount{name, telegram} ->
-      Text.unwords $ catMaybes [name, telegram]
+    Just KnownAccount{publicName, privateName, telegram} ->
+      case catMaybes visibleNames of
+        [] -> def
+        ws -> Text.unwords ws
+      where
+        visibleNames
+          | isUserKnown = [publicName, privateName, telegram]
+          | otherwise  = [publicName]
     Nothing -> def
   where
     def = "..." <> Text.takeEnd 4 account
