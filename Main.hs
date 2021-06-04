@@ -27,6 +27,7 @@ import qualified Data.Aeson as Aeson
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as BSL
 import           Data.Map.Strict (Map, (!?))
+import           Data.Text (Text)
 import qualified Data.Text as Text
 import           Data.Time (UTCTime, addUTCTime, getCurrentTime,
                             secondsToNominalDiffTime)
@@ -48,7 +49,7 @@ share
   [mkPersist sqlSettings, mkMigrate "migrateAll"]
   [persistLowerCase|
     Cache
-      Id            String
+      Id            Text
       responseBody  ByteString
       updated       UTCTime
   |]
@@ -118,17 +119,20 @@ handleCommand = \case
     holders <- liftIO $ getHolders mtl
     replyText $
       Text.unlines
-        [ Text.pack $ memberName knownAccounts account <> " | " <> show balance
+        [ memberName knownAccounts account <> " | " <> tshow balance
         | Holder{account, balance} <- holders
         ]
 
-memberName :: Map String String -> String -> String
+tshow :: Show a => a -> Text
+tshow = Text.pack . show
+
+memberName :: Map Text Text -> Text -> Text
 memberName knownAccounts account =
   case knownAccounts !? account of
     Just name -> name
-    Nothing   -> "..." <> drop (length account - 4) account
+    Nothing   -> "..." <> Text.takeEnd 4 account
 
-getCached :: String -> IO ByteString
+getCached :: Text -> IO ByteString
 getCached url =
   runSqlite cacheFile do
     runMigration migrateAll
@@ -140,7 +144,8 @@ getCached url =
             pure cacheResponseBody
       _ -> do
         responseBody <-
-          liftIO $ BSL.toStrict . view Wreq.responseBody <$> Wreq.get url
+          liftIO $
+          BSL.toStrict . view Wreq.responseBody <$> Wreq.get (Text.unpack url)
         Persist.repsert
           (CacheKey url)
           Cache{cacheResponseBody = responseBody, cacheUpdated = now}
@@ -159,7 +164,7 @@ getHolders fund =
   where
     network = "public"
     url =
-      concat
+      mconcat
         [ "https://api.stellar.expert/explorer/", network
         , "/asset/", assetId fund
         , "/holders"
@@ -189,10 +194,10 @@ newtype Embedded a = Embedded{records :: [a]}
   deriving anyclass (FromJSON)
   deriving stock (Generic)
 
-data Holder = Holder{account, balance :: String}
+data Holder = Holder{account, balance :: Text}
   deriving (FromJSON, Generic, Show)
 
-data Fund = Fund{assetName, assetIssuer :: String, treasury :: Maybe String}
+data Fund = Fund{assetName, assetIssuer :: Text, treasury :: Maybe Text}
 
-assetId :: Fund -> String
+assetId :: Fund -> Text
 assetId Fund{assetName, assetIssuer} = assetName <> "-" <> assetIssuer
