@@ -5,6 +5,7 @@ import           Control.Monad.IO.Class (liftIO)
 import           Data.Aeson (FromJSON)
 import qualified Data.Aeson as Aeson
 import           Data.Map.Strict (Map, (!?))
+import           Data.Maybe (catMaybes)
 import           Data.Ratio ((%))
 import           Data.Text (Text)
 import qualified Data.Text as Text
@@ -117,11 +118,21 @@ replyHolders fund@Fund{assetName} = do
 tshow :: Show a => a -> Text
 tshow = Text.pack . show
 
-memberName :: Map Text Text -> Text -> Text
+data KnownAccount = KnownAccount
+  { name     :: Maybe Text
+  , telegram :: Maybe Text
+  }
+  deriving (FromJSON, Generic)
+
+memberName :: Map Text KnownAccount -> Text -> Text
 memberName knownAccounts account =
   case knownAccounts !? account of
-    Just name -> name
-    Nothing   -> "..." <> Text.takeEnd 4 account
+    Just KnownAccount{name = Nothing, telegram = Nothing} -> def
+    Just KnownAccount{name, telegram} ->
+      Text.unwords $ catMaybes [name, telegram]
+    Nothing -> def
+  where
+    def = "..." <> Text.takeEnd 4 account
 
 getHolders :: Fund -> IO [Holder]
 getHolders fund =
