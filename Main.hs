@@ -1,4 +1,4 @@
-{-# OPTIONS -Wno-orphans #-}
+{-# OPTIONS -Wno-partial-fields #-} -- TODO NoFieldSelectors
 
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -19,10 +19,9 @@ import qualified Data.Yaml as Yaml
 import           GHC.Generics (Generic)
 import           Telegram.Bot.API (ParseMode (Markdown), Update,
                                    defaultTelegramClientEnv)
-import           Telegram.Bot.Simple (BotApp (..), BotContext (..), BotM, Eff,
-                                      getEnvToken, reply, replyMessageParseMode,
-                                      replyText, startBot_, toReplyMessage,
-                                      (<#))
+import           Telegram.Bot.Simple (BotApp (..), BotM, Eff, getEnvToken,
+                                      reply, replyMessageParseMode, replyText,
+                                      startBot_, toReplyMessage, (<#))
 import           Telegram.Bot.Simple.Debug (traceBotDefault)
 import           Telegram.Bot.Simple.UpdateParser (parseUpdate)
 import qualified Telegram.Bot.Simple.UpdateParser as UpdateParser
@@ -47,20 +46,23 @@ data Command
   | MtlcityHolders
   deriving Show
 
-data Action = NoAction | Action Command
+data Action = NoAction | Action{username :: Maybe Text, command :: Command}
   deriving Show
 
 botApp :: BotApp Model Action
 botApp =
   BotApp
     { botInitialModel = NoModel
-    , botAction       = \u _ -> Action <$> handleUpdate u
+    , botAction       = \u _ -> Action (getUsername u) <$> getCommand u
     , botHandler      = handleAction
     , botJobs         = []
     }
 
-handleUpdate :: Update -> Maybe Command
-handleUpdate =
+getUsername :: Update -> Maybe Text
+getUsername = view $ #updateMessage . _Just . #messageChat . #chatUsername
+
+getCommand :: Update -> Maybe Command
+getCommand =
   parseUpdate
     $   Help <$ (UpdateParser.command "help" <|> UpdateParser.command "start")
     <|> MtlInfo        <$ UpdateParser.command "mtl"
@@ -69,10 +71,10 @@ handleUpdate =
     <|> MtlcityHolders <$ UpdateParser.command "mtlcity_holders"
 
 handleAction :: Action -> Model -> Eff Action Model
-handleAction NoAction     model = pure model
-handleAction (Action cmd) model =
+handleAction NoAction                  model = pure model
+handleAction Action{command, username} model =
   model <# do
-    handleCommand cmd
+    handleCommand username command
     pure NoAction
 
 help :: Text
@@ -86,21 +88,16 @@ help =
   \\n\
   \There may be a delay in a few minutes in data freshness."
 
-handleCommand :: Command -> BotM ()
-handleCommand = \case
+handleCommand :: Maybe Text -> Command -> BotM ()
+handleCommand mUsername = \case
   Help           -> replyText help
   MtlInfo        -> replyText $ assetExpertUrl mtl
   MtlcityInfo    -> replyText $ assetExpertUrl mtlcity
-  MtlHolders     -> replyHolders mtl
-  MtlcityHolders -> replyHolders mtlcity
+  MtlHolders     -> replyHolders mUsername mtl
+  MtlcityHolders -> replyHolders mUsername mtlcity
 
--- | TODO propose upstream
-deriving instance Generic BotContext
-
-replyHolders :: Fund -> BotM ()
-replyHolders fund@Fund{assetName} = do
-  mUsername <-
-    view $ #botContextUpdate . _Just . #updateMessage . _Just . #messageChat . #chatUsername
+replyHolders :: Maybe Text -> Fund -> BotM ()
+replyHolders mUsername fund@Fund{assetName} = do
   knownAccounts <-
     liftIO $ Yaml.decodeFileThrow "../stellar-id/known_accounts.yaml"
   let isUserKnown =
