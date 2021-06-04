@@ -12,7 +12,7 @@ import qualified Data.Yaml as Yaml
 import           GHC.Generics (Generic)
 import           Telegram.Bot.API (ParseMode (Markdown), Update,
                                    defaultTelegramClientEnv)
-import           Telegram.Bot.Simple (BotApp (..), BotM, Eff, eff, getEnvToken,
+import           Telegram.Bot.Simple (BotApp (..), BotM, Eff, getEnvToken,
                                       reply, replyMessageParseMode, replyText,
                                       startBot_, toReplyMessage, (<#))
 import           Telegram.Bot.Simple.Debug (traceBotDefault)
@@ -28,7 +28,7 @@ main = do
   clientEnv <- defaultTelegramClientEnv token
   startBot_ (traceBotDefault botApp) clientEnv
 
-newtype Model = Model{initialized :: Bool}
+data Model = NoModel
   deriving Show
 
 data Command
@@ -45,7 +45,7 @@ data Action = NoAction | Action Command
 botApp :: BotApp Model Action
 botApp =
   BotApp
-    { botInitialModel = Model{initialized = False}
+    { botInitialModel = NoModel
     , botAction       = \u _ -> Action <$> handleUpdate u
     , botHandler      = handleAction
     , botJobs         = []
@@ -61,18 +61,11 @@ handleUpdate =
     <|> MtlcityHolders <$ UpdateParser.command "mtlcity_holders"
 
 handleAction :: Action -> Model -> Eff Action Model
-handleAction action model@Model{initialized = False} = do
-  eff $ NoAction <$ initialize
-  handleAction action model{initialized = True}
-handleAction NoAction model = do
-  pure model
+handleAction NoAction     model = pure model
 handleAction (Action cmd) model =
   model <# do
     handleCommand cmd
     pure NoAction
-
-initialize :: BotM ()
-initialize = pure ()
 
 help :: Text
 help =
