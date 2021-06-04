@@ -1,3 +1,4 @@
+{-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -10,9 +11,15 @@ import           Control.Applicative ((<|>))
 import           Control.Lens ((^.))
 import           Control.Monad.IO.Class (liftIO)
 import           Data.Aeson (FromJSON)
+import qualified Data.Aeson as Aeson
+import           Data.ByteString.Lazy (ByteString)
 import qualified Data.Text as Text
+import           Data.Time (addUTCTime, getCurrentTime,
+                            secondsToNominalDiffTime)
+import           Database.SQLite.Simple (NamedParam ((:=)))
+import qualified Database.SQLite.Simple as SQLite
 import           GHC.Generics (Generic)
-import           Network.Wreq (asJSON, get, responseBody)
+import           Network.Wreq (get, responseBody)
 import           Telegram.Bot.API (Update, defaultTelegramClientEnv)
 import           Telegram.Bot.Simple (BotApp (..), BotM, Eff, eff, getEnvToken,
                                       replyText, startBot_, (<#))
@@ -73,7 +80,8 @@ handleCommand = \case
       \\n\
       \/mtl – MTL information\n\
       \/mtl_holders – MTL holders\n\
-      \"
+      \\n\
+      \There may be a delay in a few minutes in data actuality."
   MtlInfo ->
     replyText
       "https://stellar.expert/explorer/public/asset/\
@@ -82,12 +90,44 @@ handleCommand = \case
     holders <- liftIO $ getHolders mtl
     replyText $ Text.pack $ show holders
 
+getCached :: String -> IO ByteString
+getCached url =
+  SQLite.withConnection cacheFile \conn -> do
+    SQLite.execute_
+      conn
+      "CREATE TABLE IF NOT EXISTS cache   \
+        \ ( url TEXT NOT NULL PRIMARY KEY \
+        \ , responseBody BLOB NOT NULL        \
+        \ , updated TEXT NOT NUll         \
+        \ )"
+    cached <-
+      SQLite.queryNamed
+        conn
+        "SELECT responseBody, updated FROM cache WHERE url = :url"
+        [":url" := url]
+    now <- getCurrentTime
+    case cached of
+      (respBody, updated) : _ | addUTCTime timeout updated > now ->
+        pure respBody
+      _ -> do
+        respBody <- (^. responseBody) <$> get url
+        SQLite.executeNamed
+          conn
+          "INSERT INTO cache (url, responseBody, updated)\
+            \ VALUES (:url, :responseBody, :updated)"
+          [":url" := url, ":responseBody" := respBody, ":updated" := now]
+        pure respBody
+  where
+    cacheFile = "http_cache.sqlite"
+    timeout = secondsToNominalDiffTime 60
+
 getHolders :: Fund -> IO [Holder]
 getHolders fund =
   do
-    r <- asJSON =<< get url
-    let ResponseOk{_embedded = Embedded{records}} = r ^. responseBody
-    pure records
+    respBody <- getCached url
+    case Aeson.eitherDecode' respBody of
+      Left err                                        -> fail err
+      Right ResponseOk{_embedded = Embedded{records}} -> pure records
   where
     network = "public"
     url =
