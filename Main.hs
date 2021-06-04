@@ -2,30 +2,54 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
+
+module Main (main, CacheId) where
 
 import           Control.Applicative ((<|>))
-import           Control.Lens ((^.))
+import           Control.Lens (view)
 import           Control.Monad.IO.Class (liftIO)
 import           Data.Aeson (FromJSON)
 import qualified Data.Aeson as Aeson
-import           Data.ByteString.Lazy (ByteString)
+import           Data.ByteString (ByteString)
+import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Text as Text
-import           Data.Time (addUTCTime, getCurrentTime,
+import           Data.Time (UTCTime, addUTCTime, getCurrentTime,
                             secondsToNominalDiffTime)
-import           Database.SQLite.Simple (NamedParam ((:=)))
-import qualified Database.SQLite.Simple as SQLite
+import qualified Database.Persist as Persist
+import           Database.Persist.Sqlite (runMigration, runSqlite)
+import           Database.Persist.TH (mkMigrate, mkPersist, persistLowerCase,
+                                      share, sqlSettings)
 import           GHC.Generics (Generic)
-import           Network.Wreq (get, responseBody)
+import qualified Network.Wreq as Wreq
 import           Telegram.Bot.API (Update, defaultTelegramClientEnv)
 import           Telegram.Bot.Simple (BotApp (..), BotM, Eff, eff, getEnvToken,
                                       replyText, startBot_, (<#))
 import           Telegram.Bot.Simple.Debug (traceBotDefault)
 import           Telegram.Bot.Simple.UpdateParser as UpdateParser (command,
                                                                    parseUpdate)
+
+share
+  [mkPersist sqlSettings, mkMigrate "migrateAll"]
+  [persistLowerCase|
+    Cache
+      Id            String
+      responseBody  ByteString
+      updated       UTCTime
+  |]
 
 main :: IO ()
 main = do
@@ -92,31 +116,21 @@ handleCommand = \case
 
 getCached :: String -> IO ByteString
 getCached url =
-  SQLite.withConnection cacheFile \conn -> do
-    SQLite.execute_
-      conn
-      "CREATE TABLE IF NOT EXISTS cache   \
-        \ ( url TEXT NOT NULL PRIMARY KEY \
-        \ , responseBody BLOB NOT NULL        \
-        \ , updated TEXT NOT NUll         \
-        \ )"
-    cached <-
-      SQLite.queryNamed
-        conn
-        "SELECT responseBody, updated FROM cache WHERE url = :url"
-        [":url" := url]
-    now <- getCurrentTime
+  runSqlite cacheFile do
+    runMigration migrateAll
+    cached <- Persist.get (CacheKey url)
+    now <- liftIO getCurrentTime
     case cached of
-      (respBody, updated) : _ | addUTCTime timeout updated > now ->
-        pure respBody
+      Just Cache{cacheResponseBody, cacheUpdated}
+        | addUTCTime timeout cacheUpdated > now ->
+            pure cacheResponseBody
       _ -> do
-        respBody <- (^. responseBody) <$> get url
-        SQLite.executeNamed
-          conn
-          "INSERT INTO cache (url, responseBody, updated)\
-            \ VALUES (:url, :responseBody, :updated)"
-          [":url" := url, ":responseBody" := respBody, ":updated" := now]
-        pure respBody
+        responseBody <-
+          liftIO $ BSL.toStrict . view Wreq.responseBody <$> Wreq.get url
+        Persist.insertKey
+          (CacheKey url)
+          Cache{cacheResponseBody = responseBody, cacheUpdated = now}
+        pure responseBody
   where
     cacheFile = "http_cache.sqlite"
     timeout = secondsToNominalDiffTime 60
@@ -124,8 +138,8 @@ getCached url =
 getHolders :: Fund -> IO [Holder]
 getHolders fund =
   do
-    respBody <- getCached url
-    case Aeson.eitherDecode' respBody of
+    responseBody <- getCached url
+    case Aeson.eitherDecodeStrict' responseBody of
       Left err                                        -> fail err
       Right ResponseOk{_embedded = Embedded{records}} -> pure records
   where
@@ -154,10 +168,12 @@ mtl =
 --     }
 
 newtype ResponseOk a = ResponseOk{_embedded :: Embedded a}
-  deriving (FromJSON, Generic)
+  deriving anyclass (FromJSON)
+  deriving stock (Generic)
 
 newtype Embedded a = Embedded{records :: [a]}
-  deriving (FromJSON, Generic)
+  deriving anyclass (FromJSON)
+  deriving stock (Generic)
 
 data Holder = Holder{account, balance :: String}
   deriving (FromJSON, Generic, Show)
